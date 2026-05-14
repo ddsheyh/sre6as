@@ -1,0 +1,65 @@
+---
+# GoTicket — Clone repository and deploy with Docker Compose
+- name: Deploy GoTicket application
+  hosts: servers
+  become: yes
+  vars:
+    repo_url: "https://github.com/ddsheyh/sre6as.git"
+    app_dir: "/opt/goticket"
+  tasks:
+    - name: Create application directory
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+
+    - name: Clone or update repository
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ app_dir }}"
+        version: main
+        force: yes
+      become_user: "{{ ansible_user }}"
+
+    - name: Stop existing containers (if any)
+      shell: docker compose down
+      args:
+        chdir: "{{ app_dir }}"
+      ignore_errors: yes
+
+    - name: Remove old volumes (clean start)
+      shell: docker volume prune -f
+      ignore_errors: yes
+
+    - name: Build and start all services
+      shell: docker compose up -d --build
+      args:
+        chdir: "{{ app_dir }}"
+
+    - name: Wait for services to start
+      pause:
+        seconds: 30
+
+    - name: Check container status
+      shell: docker compose ps
+      args:
+        chdir: "{{ app_dir }}"
+      register: compose_status
+
+    - name: Show running containers
+      debug:
+        msg: "{{ compose_status.stdout_lines }}"
+
+    - name: Verify web application is responding
+      uri:
+        url: "http://localhost/api/events"
+        return_content: yes
+        status_code: 200
+      register: health
+      retries: 5
+      delay: 5
+
+    - name: Show health check result
+      debug:
+        msg: "Application is running — events endpoint returned HTTP {{ health.status }}"

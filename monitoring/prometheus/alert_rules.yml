@@ -1,7 +1,6 @@
 groups:
   - name: goticket_alerts
     rules:
-      # Service down alert
       - alert: ServiceDown
         expr: up == 0
         for: 30s
@@ -11,7 +10,6 @@ groups:
           summary: "Service {{ $labels.job }} is down"
           description: "{{ $labels.job }} has been unreachable for more than 30 seconds."
 
-      # Order service DB disconnected
       - alert: OrderServiceDBDown
         expr: order_db_up == 0
         for: 15s
@@ -21,7 +19,6 @@ groups:
           summary: "Order Service lost database connection"
           description: "order_db_up metric is 0 — database is unreachable from order-service."
 
-      # High error rate (more than 5 errors per minute)
       - alert: HighOrderErrorRate
         expr: rate(order_errors_total[1m]) > 0.08
         for: 30s
@@ -31,7 +28,6 @@ groups:
           summary: "High error rate in Order Service"
           description: "Order errors are increasing at {{ $value }} errors/sec."
 
-      # High request latency (p95 > 1 second)
       - alert: HighRequestLatency
         expr: histogram_quantile(0.95, rate(order_http_duration_seconds_bucket[5m])) > 1
         for: 1m
@@ -41,7 +37,6 @@ groups:
           summary: "High request latency in Order Service"
           description: "95th percentile latency is {{ $value }}s, exceeding 1s threshold."
 
-      # Service restarting frequently (scrape target flapping)
       - alert: ServiceFlapping
         expr: changes(up[5m]) > 3
         for: 1m

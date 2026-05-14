@@ -36,6 +36,15 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS notifications (
+    id SERIAL PRIMARY KEY,
+    user_id INT REFERENCES users(id),
+    type VARCHAR(50) NOT NULL DEFAULT 'info',
+    message TEXT NOT NULL,
+    status VARCHAR(50) DEFAULT 'sent',
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
 INSERT INTO events (title, description, location, event_date, price, available_tickets) VALUES
 ('Music Festival 2026', 'Annual summer festival featuring top artists and bands from around the world. Three stages, food courts, and camping area.', 'Central Park, Qaragandy', '2026-07-15 18:00:00', 4500.00, 500),
 ('Tech Conference 2026', 'Leading technology conference covering AI, cloud computing, and DevOps. Networking opportunities and workshops included.', 'Expo Center, Astana', '2026-06-20 09:00:00', 7500.00, 300),

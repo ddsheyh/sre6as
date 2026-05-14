@@ -1,4 +1,5 @@
 services:
+  # --- Database ---
   postgres:
     image: postgres:15-alpine
     restart: unless-stopped
@@ -9,21 +10,21 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 5s
       timeout: 5s
       retries: 5
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 512M
     networks:
       - goticket
 
+  # --- Backend Services ---
   auth-service:
-    build: ./services/auth
+    build:
+      context: ./services/auth
+      network: host
     restart: unless-stopped
     environment:
       DB_HOST: ${DB_HOST}
@@ -42,16 +43,13 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 128M
     networks:
       - goticket
 
   user-service:
-    build: ./services/user
+    build:
+      context: ./services/user
+      network: host
     restart: unless-stopped
     environment:
       DB_HOST: ${DB_HOST}
@@ -70,16 +68,13 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 128M
     networks:
       - goticket
 
   event-service:
-    build: ./services/event
+    build:
+      context: ./services/event
+      network: host
     restart: unless-stopped
     environment:
       DB_HOST: ${DB_HOST}
@@ -97,16 +92,13 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 128M
     networks:
       - goticket
 
   order-service:
-    build: ./services/order
+    build:
+      context: ./services/order
+      network: host
     restart: unless-stopped
     environment:
       DB_HOST: ${ORDER_DB_HOST}
@@ -125,16 +117,13 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 128M
     networks:
       - goticket
 
   chat-service:
-    build: ./services/chat
+    build:
+      context: ./services/chat
+      network: host
     restart: unless-stopped
     environment:
       DB_HOST: ${DB_HOST}
@@ -153,14 +142,34 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 128M
     networks:
       - goticket
 
+  notification-service:
+    build:
+      context: ./services/notification
+      network: host
+    restart: unless-stopped
+    environment:
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      SERVICE_PORT: ${SERVICE_PORT}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - goticket
+
+  # --- Nginx (Frontend + Reverse Proxy) ---
   nginx:
     image: nginx:alpine
     restart: unless-stopped
@@ -175,6 +184,7 @@ services:
       - event-service
       - order-service
       - chat-service
+      - notification-service
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/"]
       interval: 10s
@@ -183,6 +193,7 @@ services:
     networks:
       - goticket
 
+  # --- Monitoring ---
   prometheus:
     image: prom/prometheus:v2.51.0
     restart: unless-stopped
@@ -197,6 +208,7 @@ services:
       - event-service
       - order-service
       - chat-service
+      - notification-service
     networks:
       - goticket
 
@@ -217,9 +229,24 @@ services:
     networks:
       - goticket
 
+  # --- LocalStack (for Terraform) ---
+  localstack:
+    image: localstack/localstack:3.4
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: ec2,s3,iam
+      DEFAULT_REGION: us-east-1
+      DEBUG: "0"
+    volumes:
+      - localstack-data:/var/lib/localstack
+    networks:
+      - goticket
+
 volumes:
   pgdata:
   grafana-data:
+  localstack-data:
 
 networks:
   goticket:

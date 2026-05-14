@@ -30,3 +30,8 @@ scrape_configs:
     static_configs:
       - targets: ['chat-service:8080']
     metrics_path: /metrics
+
+  - job_name: 'notification-service'
+    static_configs:
+      - targets: ['notification-service:8080']
+    metrics_path: /metrics

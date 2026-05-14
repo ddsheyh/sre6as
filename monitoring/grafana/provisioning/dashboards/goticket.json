@@ -69,12 +69,12 @@
       }
     },
     {
-      "title": "Total Requests/sec (all services)",
+      "title": "Total Requests/sec",
       "type": "stat",
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 4 },
       "datasource": { "type": "prometheus", "uid": "" },
       "targets": [
-        { "expr": "sum(rate(auth_http_requests_total[1m])) + sum(rate(event_http_requests_total[1m])) + sum(rate(order_http_requests_total[1m])) + sum(rate(user_http_requests_total[1m]))", "legendFormat": "RPS", "refId": "A" }
+        { "expr": "sum(rate(auth_http_requests_total[1m])) + sum(rate(event_http_requests_total[1m])) + sum(rate(order_http_requests_total[1m])) + sum(rate(user_http_requests_total[1m])) + sum(rate(notification_http_requests_total[1m]))", "legendFormat": "RPS", "refId": "A" }
       ],
       "fieldConfig": {
         "defaults": {
@@ -83,24 +83,200 @@
         }
       }
     },
+
+    {
+      "title": "── SLI / SLO Compliance ──",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 8 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "SLO: Availability (target ≥ 99%)",
+      "description": "Percentage of time all services are UP. SLO target: ≥ 99%",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "" },
+      "targets": [
+        { "expr": "avg(up) * 100", "legendFormat": "Availability %", "refId": "A", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 95 },
+              { "color": "yellow", "value": 99 },
+              { "color": "green", "value": 99.5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "SLO: Latency p95 (target ≤ 200ms)",
+      "description": "95th percentile response time for order-service. SLO target: ≤ 200ms (0.2s)",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "" },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, rate(order_http_duration_seconds_bucket[5m]))", "legendFormat": "order p95", "refId": "A", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.2 },
+              { "color": "red", "value": 0.5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "SLO: Error Rate (target ≤ 1%)",
+      "description": "Percentage of 5xx responses from order-service. SLO target: ≤ 1%",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "" },
+      "targets": [
+        { "expr": "(sum(rate(order_http_requests_total{status=~\"5..\"}[5m])) / sum(rate(order_http_requests_total[5m]))) * 100 OR vector(0)", "legendFormat": "Error Rate %", "refId": "A", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 10,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "SLO: Success Rate (target ≥ 99%)",
+      "description": "Percentage of 2xx responses from event-service. SLO target: ≥ 99%",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "" },
+      "targets": [
+        { "expr": "(sum(rate(event_http_requests_total{status=\"200\"}[5m])) / sum(rate(event_http_requests_total[5m]))) * 100 OR vector(100)", "legendFormat": "Success Rate %", "refId": "A", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 95 },
+              { "color": "yellow", "value": 99 },
+              { "color": "green", "value": 99.5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "SLI: Availability Over Time (%)",
+      "description": "Uptime percentage per service over rolling 10m window. Green line = SLO target 99%",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "" },
+      "targets": [
+        { "expr": "avg_over_time(up{job=\"auth-service\"}[10m]) * 100", "legendFormat": "auth", "refId": "A" },
+        { "expr": "avg_over_time(up{job=\"event-service\"}[10m]) * 100", "legendFormat": "event", "refId": "B" },
+        { "expr": "avg_over_time(up{job=\"order-service\"}[10m]) * 100", "legendFormat": "order", "refId": "C" },
+        { "expr": "avg_over_time(up{job=\"user-service\"}[10m]) * 100", "legendFormat": "user", "refId": "D" },
+        { "expr": "avg_over_time(up{job=\"chat-service\"}[10m]) * 100", "legendFormat": "chat", "refId": "E" },
+        { "expr": "avg_over_time(up{job=\"notification-service\"}[10m]) * 100", "legendFormat": "notification", "refId": "F" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": { "fillOpacity": 10 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 99 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "SLI: Error Rate Over Time (%)",
+      "description": "Percentage of 5xx errors per service. SLO target: ≤ 1%",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "" },
+      "targets": [
+        { "expr": "sum(rate(order_http_requests_total{status=~\"5..\"}[5m])) / sum(rate(order_http_requests_total[5m])) * 100", "legendFormat": "order error %", "refId": "A" },
+        { "expr": "sum(rate(event_http_requests_total{status=~\"5..\"}[5m])) / sum(rate(event_http_requests_total[5m])) * 100", "legendFormat": "event error %", "refId": "B" },
+        { "expr": "sum(rate(auth_http_requests_total{status=~\"5..\"}[5m])) / sum(rate(auth_http_requests_total[5m])) * 100", "legendFormat": "auth error %", "refId": "C" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": { "fillOpacity": 10 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      }
+    },
+
+    {
+      "title": "── Service Metrics ──",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 },
+      "collapsed": false,
+      "panels": []
+    },
     {
       "title": "Request Rate per Service",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 23 },
       "datasource": { "type": "prometheus", "uid": "" },
       "targets": [
         { "expr": "sum(rate(auth_http_requests_total[1m]))", "legendFormat": "auth-service", "refId": "A" },
         { "expr": "sum(rate(event_http_requests_total[1m]))", "legendFormat": "event-service", "refId": "B" },
         { "expr": "sum(rate(order_http_requests_total[1m]))", "legendFormat": "order-service", "refId": "C" },
         { "expr": "sum(rate(user_http_requests_total[1m]))", "legendFormat": "user-service", "refId": "D" },
-        { "expr": "sum(rate(chat_http_requests_total[1m]))", "legendFormat": "chat-service", "refId": "E" }
+        { "expr": "sum(rate(chat_http_requests_total[1m]))", "legendFormat": "chat-service", "refId": "E" },
+        { "expr": "sum(rate(notification_http_requests_total[1m]))", "legendFormat": "notification-service", "refId": "F" }
       ],
       "fieldConfig": { "defaults": { "unit": "reqps" } }
     },
     {
-      "title": "Error Rate per Service",
+      "title": "Error Rate per Service (req/s)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 23 },
       "datasource": { "type": "prometheus", "uid": "" },
       "targets": [
         { "expr": "sum(rate(auth_http_requests_total{status=~\"4..|5..\"}[1m]))", "legendFormat": "auth errors", "refId": "A" },
@@ -113,20 +289,21 @@
     {
       "title": "Request Duration p95",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 31 },
       "datasource": { "type": "prometheus", "uid": "" },
       "targets": [
         { "expr": "histogram_quantile(0.95, rate(auth_http_duration_seconds_bucket[5m]))", "legendFormat": "auth p95", "refId": "A" },
         { "expr": "histogram_quantile(0.95, rate(order_http_duration_seconds_bucket[5m]))", "legendFormat": "order p95", "refId": "B" },
         { "expr": "histogram_quantile(0.95, rate(event_http_duration_seconds_bucket[5m]))", "legendFormat": "event p95", "refId": "C" },
-        { "expr": "histogram_quantile(0.95, rate(user_http_duration_seconds_bucket[5m]))", "legendFormat": "user p95", "refId": "D" }
+        { "expr": "histogram_quantile(0.95, rate(user_http_duration_seconds_bucket[5m]))", "legendFormat": "user p95", "refId": "D" },
+        { "expr": "histogram_quantile(0.95, rate(notification_http_duration_seconds_bucket[5m]))", "legendFormat": "notification p95", "refId": "E" }
       ],
       "fieldConfig": { "defaults": { "unit": "s" } }
     },
     {
       "title": "Request Duration p50 (Median)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 31 },
       "datasource": { "type": "prometheus", "uid": "" },
       "targets": [
         { "expr": "histogram_quantile(0.50, rate(auth_http_duration_seconds_bucket[5m]))", "legendFormat": "auth p50", "refId": "A" },
@@ -135,39 +312,49 @@
       ],
       "fieldConfig": { "defaults": { "unit": "s" } }
     },
+
+    {
+      "title": "── Resource Usage ──",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 39 },
+      "collapsed": false,
+      "panels": []
+    },
     {
       "title": "Go Memory Usage (Heap)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
       "datasource": { "type": "prometheus", "uid": "" },
       "targets": [
         { "expr": "go_memstats_heap_alloc_bytes{job=\"auth-service\"}", "legendFormat": "auth heap", "refId": "A" },
         { "expr": "go_memstats_heap_alloc_bytes{job=\"event-service\"}", "legendFormat": "event heap", "refId": "B" },
         { "expr": "go_memstats_heap_alloc_bytes{job=\"order-service\"}", "legendFormat": "order heap", "refId": "C" },
         { "expr": "go_memstats_heap_alloc_bytes{job=\"user-service\"}", "legendFormat": "user heap", "refId": "D" },
-        { "expr": "go_memstats_heap_alloc_bytes{job=\"chat-service\"}", "legendFormat": "chat heap", "refId": "E" }
+        { "expr": "go_memstats_heap_alloc_bytes{job=\"chat-service\"}", "legendFormat": "chat heap", "refId": "E" },
+        { "expr": "go_memstats_heap_alloc_bytes{job=\"notification-service\"}", "legendFormat": "notification heap", "refId": "F" }
       ],
       "fieldConfig": { "defaults": { "unit": "bytes" } }
     },
     {
       "title": "Go Goroutines per Service",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
       "datasource": { "type": "prometheus", "uid": "" },
       "targets": [
         { "expr": "go_goroutines{job=\"auth-service\"}", "legendFormat": "auth", "refId": "A" },
         { "expr": "go_goroutines{job=\"event-service\"}", "legendFormat": "event", "refId": "B" },
         { "expr": "go_goroutines{job=\"order-service\"}", "legendFormat": "order", "refId": "C" },
         { "expr": "go_goroutines{job=\"user-service\"}", "legendFormat": "user", "refId": "D" },
-        { "expr": "go_goroutines{job=\"chat-service\"}", "legendFormat": "chat", "refId": "E" }
+        { "expr": "go_goroutines{job=\"chat-service\"}", "legendFormat": "chat", "refId": "E" },
+        { "expr": "go_goroutines{job=\"notification-service\"}", "legendFormat": "notification", "refId": "F" }
       ]
     }
   ],
   "schemaVersion": 39,
-  "tags": ["goticket", "capacity"],
+  "tags": ["goticket", "sli-slo", "capacity"],
   "templating": { "list": [] },
   "time": { "from": "now-30m", "to": "now" },
   "title": "GoTicket Services Dashboard",
   "uid": "goticket-main",
-  "version": 2
+  "version": 3
 }

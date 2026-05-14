@@ -1,0 +1,57 @@
+---
+# GoTicket — Verify monitoring stack is operational
+- name: Check monitoring services
+  hosts: servers
+  become: yes
+  vars:
+    app_dir: "/opt/goticket"
+  tasks:
+    - name: Check Prometheus is running
+      uri:
+        url: "http://localhost:9090/-/healthy"
+        return_content: yes
+      register: prom_health
+      retries: 3
+      delay: 5
+
+    - name: Show Prometheus status
+      debug:
+        msg: "Prometheus is {{ 'HEALTHY' if prom_health.status == 200 else 'UNHEALTHY' }}"
+
+    - name: Check Grafana is running
+      uri:
+        url: "http://localhost:3000/api/health"
+        return_content: yes
+      register: grafana_health
+      retries: 3
+      delay: 5
+
+    - name: Show Grafana status
+      debug:
+        msg: "Grafana is {{ 'HEALTHY' if grafana_health.status == 200 else 'UNHEALTHY' }}"
+
+    - name: Check Prometheus targets
+      uri:
+        url: "http://localhost:9090/api/v1/targets"
+        return_content: yes
+      register: targets
+
+    - name: Show number of scrape targets
+      debug:
+        msg: "Prometheus is scraping {{ targets.json.data.activeTargets | length }} targets"
+
+    - name: Check all service health endpoints
+      uri:
+        url: "http://localhost/api/{{ item }}"
+        return_content: yes
+        status_code: [200, 401]
+      loop:
+        - events
+        - orders
+        - notifications
+      register: svc_checks
+
+    - name: Show service check results
+      debug:
+        msg: "{{ item.item }} → HTTP {{ item.status }}"
+      loop: "{{ svc_checks.results }}"
