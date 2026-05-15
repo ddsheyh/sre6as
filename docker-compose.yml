@@ -1,5 +1,5 @@
 services:
-  # --- Database ---
+  # --- Databases ---
   postgres:
     image: postgres:15-alpine
     restart: unless-stopped
@@ -20,7 +20,23 @@ services:
     networks:
       - goticket
 
-  # --- Backend Services ---
+  mongo:
+    image: mongo:7-jammy
+    restart: unless-stopped
+    volumes:
+      - mongodata:/data/db
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.runCommand('ping').ok", "--quiet"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - goticket
+
+  # --- Backend Services (PostgreSQL) ---
   auth-service:
     build:
       context: ./services/auth
@@ -120,21 +136,19 @@ services:
     networks:
       - goticket
 
+  # --- Backend Services (MongoDB) ---
   chat-service:
     build:
       context: ./services/chat
       network: host
     restart: unless-stopped
     environment:
-      DB_HOST: ${DB_HOST}
-      DB_PORT: ${DB_PORT}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_NAME: ${DB_NAME}
+      MONGO_URI: ${MONGO_URI}
+      MONGO_DB: ${MONGO_DB}
       JWT_SECRET: ${JWT_SECRET}
       SERVICE_PORT: ${SERVICE_PORT}
     depends_on:
-      postgres:
+      mongo:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
@@ -151,14 +165,11 @@ services:
       network: host
     restart: unless-stopped
     environment:
-      DB_HOST: ${DB_HOST}
-      DB_PORT: ${DB_PORT}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_NAME: ${DB_NAME}
+      MONGO_URI: ${MONGO_URI}
+      MONGO_DB: ${MONGO_DB}
       SERVICE_PORT: ${SERVICE_PORT}
     depends_on:
-      postgres:
+      mongo:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
@@ -169,7 +180,7 @@ services:
     networks:
       - goticket
 
-  # --- Nginx (Frontend + Reverse Proxy) ---
+  # --- Nginx ---
   nginx:
     image: nginx:alpine
     restart: unless-stopped
@@ -204,11 +215,8 @@ services:
       - ./monitoring/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
     depends_on:
       - auth-service
-      - user-service
       - event-service
       - order-service
-      - chat-service
-      - notification-service
     networks:
       - goticket
 
@@ -229,24 +237,10 @@ services:
     networks:
       - goticket
 
-  # --- LocalStack (for Terraform) ---
-  localstack:
-    image: localstack/localstack:3.4
-    ports:
-      - "4566:4566"
-    environment:
-      SERVICES: ec2,s3,iam
-      DEFAULT_REGION: us-east-1
-      DEBUG: "0"
-    volumes:
-      - localstack-data:/var/lib/localstack
-    networks:
-      - goticket
-
 volumes:
   pgdata:
+  mongodata:
   grafana-data:
-  localstack-data:
 
 networks:
   goticket:

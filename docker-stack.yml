@@ -1,14 +1,8 @@
 # Docker Swarm Stack — GoTicket
 # Usage:
-#   docker compose build                          (build images first)
-#   docker swarm init                              (init swarm)
+#   docker compose build
+#   docker swarm init
 #   docker stack deploy -c docker-stack.yml goticket
-#
-# Key differences from docker-compose.yml:
-#   - Uses pre-built images (image: instead of build:)
-#   - No depends_on (Swarm does not support it)
-#   - deploy: section with replicas and restart_policy
-#   - overlay network (required for Swarm)
 
 services:
   postgres:
@@ -19,22 +13,29 @@ services:
       POSTGRES_DB: goticket
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - db_init:/docker-entrypoint-initdb.d
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U goticket"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
     deploy:
       replicas: 1
       restart_policy:
-        condition: any
-        delay: 5s
-        max_attempts: 3
+        condition: on-failure
       resources:
         limits:
           cpus: "1.0"
           memory: 512M
+    networks:
+      - goticket
+
+  mongo:
+    image: mongo:7-jammy
+    volumes:
+      - mongodata:/data/db
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
     networks:
       - goticket
 
@@ -48,18 +49,10 @@ services:
       DB_NAME: goticket
       JWT_SECRET: goticket-secret-key-2026
       SERVICE_PORT: "8080"
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
     deploy:
       replicas: 1
       restart_policy:
-        condition: any
-        delay: 5s
-        max_attempts: 3
+        condition: on-failure
       resources:
         limits:
           cpus: "0.5"
@@ -77,18 +70,10 @@ services:
       DB_NAME: goticket
       JWT_SECRET: goticket-secret-key-2026
       SERVICE_PORT: "8080"
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
     deploy:
       replicas: 1
       restart_policy:
-        condition: any
-        delay: 5s
-        max_attempts: 3
+        condition: on-failure
       resources:
         limits:
           cpus: "0.5"
@@ -105,18 +90,10 @@ services:
       DB_PASSWORD: goticket123
       DB_NAME: goticket
       SERVICE_PORT: "8080"
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
     deploy:
       replicas: 2
       restart_policy:
-        condition: any
-        delay: 5s
-        max_attempts: 3
+        condition: on-failure
       resources:
         limits:
           cpus: "0.5"
@@ -134,18 +111,10 @@ services:
       DB_NAME: goticket
       JWT_SECRET: goticket-secret-key-2026
       SERVICE_PORT: "8080"
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
     deploy:
       replicas: 1
       restart_policy:
-        condition: any
-        delay: 5s
-        max_attempts: 3
+        condition: on-failure
       resources:
         limits:
           cpus: "0.5"
@@ -156,25 +125,14 @@ services:
   chat-service:
     image: sre4-5as-chat-service:latest
     environment:
-      DB_HOST: postgres
-      DB_PORT: "5432"
-      DB_USER: goticket
-      DB_PASSWORD: goticket123
-      DB_NAME: goticket
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DB: goticket
       JWT_SECRET: goticket-secret-key-2026
       SERVICE_PORT: "8080"
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
     deploy:
       replicas: 1
       restart_policy:
-        condition: any
-        delay: 5s
-        max_attempts: 3
+        condition: on-failure
       resources:
         limits:
           cpus: "0.5"
@@ -185,24 +143,13 @@ services:
   notification-service:
     image: sre4-5as-notification-service:latest
     environment:
-      DB_HOST: postgres
-      DB_PORT: "5432"
-      DB_USER: goticket
-      DB_PASSWORD: goticket123
-      DB_NAME: goticket
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DB: goticket
       SERVICE_PORT: "8080"
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
     deploy:
       replicas: 1
       restart_policy:
-        condition: any
-        delay: 5s
-        max_attempts: 3
+        condition: on-failure
       resources:
         limits:
           cpus: "0.5"
@@ -214,18 +161,10 @@ services:
     image: nginx:alpine
     ports:
       - "80:80"
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
     deploy:
       replicas: 1
       restart_policy:
-        condition: any
-    volumes:
-      - frontend_data:/usr/share/nginx/html:ro
-      - nginx_config:/etc/nginx/conf.d:ro
+        condition: on-failure
     networks:
       - goticket
 
@@ -236,9 +175,7 @@ services:
     deploy:
       replicas: 1
       restart_policy:
-        condition: any
-    volumes:
-      - prometheus_config:/etc/prometheus:ro
+        condition: on-failure
     networks:
       - goticket
 
@@ -252,22 +189,17 @@ services:
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - grafana-data:/var/lib/grafana
-      - grafana_provisioning:/etc/grafana/provisioning:ro
     deploy:
       replicas: 1
       restart_policy:
-        condition: any
+        condition: on-failure
     networks:
       - goticket
 
 volumes:
   pgdata:
+  mongodata:
   grafana-data:
-  frontend_data:
-  nginx_config:
-  prometheus_config:
-  grafana_provisioning:
-  db_init:
 
 networks:
   goticket:

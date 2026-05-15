@@ -9,21 +9,12 @@ terraform {
 }
 
 provider "aws" {
-  region                      = "us-east-1"
-  access_key                  = "test"
-  secret_key                  = "test"
-  skip_credentials_validation = true
-  skip_requesting_account_id  = true
-  skip_metadata_api_check     = true
-
-  endpoints {
-    ec2 = "http://localhost:4566"
-    iam = "http://localhost:4566"
-    s3  = "http://localhost:4566"
-  }
+  region     = var.aws_region
+  access_key = var.aws_access_key
+  secret_key = var.aws_secret_key
 }
 
-# Security Group — open ports for SSH, HTTP, Grafana, Prometheus
+# Security Group — open ports for SSH, HTTP, HTTPS, Grafana, Prometheus
 resource "aws_security_group" "goticket_sg" {
   name        = "goticket-sg"
   description = "Security group for GoTicket application"
@@ -37,7 +28,7 @@ resource "aws_security_group" "goticket_sg" {
     description = "SSH access"
   }
 
-  # HTTP (Nginx)
+  # HTTP
   ingress {
     from_port   = 80
     to_port     = 80
@@ -46,6 +37,16 @@ resource "aws_security_group" "goticket_sg" {
     description = "HTTP - Web application"
   }
 
+  # HTTPS
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTPS - Web application"
+  }
+
+  # Grafana
   ingress {
     from_port   = 3000
     to_port     = 3000
@@ -54,6 +55,7 @@ resource "aws_security_group" "goticket_sg" {
     description = "Grafana dashboard"
   }
 
+  # Prometheus
   ingress {
     from_port   = 9090
     to_port     = 9090
@@ -75,6 +77,7 @@ resource "aws_security_group" "goticket_sg" {
   }
 }
 
+# EC2 Instance
 resource "aws_instance" "goticket_server" {
   ami           = var.ami_id
   instance_type = var.instance_type
@@ -84,21 +87,17 @@ resource "aws_instance" "goticket_server" {
 
   user_data = <<-EOF
     #!/bin/bash
-    yum update -y
-    yum install -y docker git
+    apt-get update -y
+    apt-get install -y docker.io docker-compose-v2 git
     systemctl start docker
     systemctl enable docker
-    usermod -aG docker ec2-user
-
-    # Install Docker Compose
-    curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-    chmod +x /usr/local/bin/docker-compose
+    usermod -aG docker ubuntu
 
     # Clone and start the project
-    cd /home/ec2-user
+    cd /home/ubuntu
     git clone ${var.repo_url} goticket || true
     cd goticket
-    docker-compose up -d --build
+    docker compose up -d --build
   EOF
 
   tags = {

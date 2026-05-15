@@ -19,6 +19,13 @@ terraform/.terraform.lock.hcl
 
 # Docker volumes
 pgdata/
+mongodata/
 grafana-data/
 
+# Environment (contains secrets)
 .env
+
+# SSH keys
+*.pem
+
+README.md

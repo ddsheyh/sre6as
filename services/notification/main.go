@@ -1,20 +1,22 @@
 package main
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"time"
 
-	_ "github.com/lib/pq"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-var db *sql.DB
+var collection *mongo.Collection
 
 var (
 	httpRequests = prometheus.NewCounterVec(
@@ -36,6 +38,16 @@ func init() {
 	prometheus.MustRegister(notificationsSent)
 }
 
+// Notification represents a notification stored in MongoDB
+type Notification struct {
+	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	UserID    int                `bson:"user_id" json:"user_id"`
+	Type      string             `bson:"type" json:"type"`
+	Message   string             `bson:"message" json:"message"`
+	Status    string             `bson:"status" json:"status"`
+	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
+}
+
 func jsonResponse(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -47,11 +59,13 @@ func jsonError(w http.ResponseWriter, status int, message string) {
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
-	if err := db.Ping(); err != nil {
-		jsonError(w, 503, "database unavailable")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := collection.Database().Client().Ping(ctx, nil); err != nil {
+		jsonError(w, 503, "mongodb unavailable")
 		return
 	}
-	jsonResponse(w, 200, map[string]string{"status": "ok", "service": "notification-service"})
+	jsonResponse(w, 200, map[string]string{"status": "ok", "service": "notification-service", "database": "mongodb"})
 }
 
 func notificationsHandler(w http.ResponseWriter, r *http.Request) {
@@ -89,11 +103,18 @@ func sendNotification(w http.ResponseWriter, r *http.Request) {
 		req.Type = "info"
 	}
 
-	var id int
-	err := db.QueryRow(
-		"INSERT INTO notifications (user_id, type, message) VALUES ($1, $2, $3) RETURNING id",
-		req.UserID, req.Type, req.Message,
-	).Scan(&id)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	notif := Notification{
+		UserID:    req.UserID,
+		Type:      req.Type,
+		Message:   req.Message,
+		Status:    "sent",
+		CreatedAt: time.Now(),
+	}
+
+	result, err := collection.InsertOne(ctx, notif)
 	if err != nil {
 		log.Printf("ERROR send notification: %v", err)
 		httpRequests.WithLabelValues("POST", "/api/notifications", "500").Inc()
@@ -102,11 +123,11 @@ func sendNotification(w http.ResponseWriter, r *http.Request) {
 	}
 
 	notificationsSent.Inc()
-	log.Printf("Notification sent: id=%d user=%d type=%s", id, req.UserID, req.Type)
+	log.Printf("Notification sent: id=%v user=%d type=%s", result.InsertedID, req.UserID, req.Type)
 
 	httpRequests.WithLabelValues("POST", "/api/notifications", "201").Inc()
 	jsonResponse(w, 201, map[string]interface{}{
-		"id":      id,
+		"id":      result.InsertedID,
 		"user_id": req.UserID,
 		"type":    req.Type,
 		"status":  "sent",
@@ -119,31 +140,28 @@ func listNotifications(w http.ResponseWriter, r *http.Request) {
 		httpDuration.WithLabelValues("GET", "/api/notifications").Observe(time.Since(start).Seconds())
 	}()
 
-	rows, err := db.Query("SELECT id, user_id, type, message, status, created_at FROM notifications ORDER BY created_at DESC LIMIT 50")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(50)
+	cursor, err := collection.Find(ctx, bson.D{}, opts)
 	if err != nil {
 		log.Printf("ERROR list notifications: %v", err)
 		httpRequests.WithLabelValues("GET", "/api/notifications", "500").Inc()
 		jsonError(w, 500, "internal error")
 		return
 	}
-	defer rows.Close()
+	defer cursor.Close(ctx)
 
-	type Notification struct {
-		ID        int    `json:"id"`
-		UserID    int    `json:"user_id"`
-		Type      string `json:"type"`
-		Message   string `json:"message"`
-		Status    string `json:"status"`
-		CreatedAt string `json:"created_at"`
+	var notifications []Notification
+	if err := cursor.All(ctx, &notifications); err != nil {
+		log.Printf("ERROR decode notifications: %v", err)
+		httpRequests.WithLabelValues("GET", "/api/notifications", "500").Inc()
+		jsonError(w, 500, "internal error")
+		return
 	}
-
-	notifications := []Notification{}
-	for rows.Next() {
-		var n Notification
-		if err := rows.Scan(&n.ID, &n.UserID, &n.Type, &n.Message, &n.Status, &n.CreatedAt); err != nil {
-			continue
-		}
-		notifications = append(notifications, n)
+	if notifications == nil {
+		notifications = []Notification{}
 	}
 
 	httpRequests.WithLabelValues("GET", "/api/notifications", "200").Inc()
@@ -154,30 +172,31 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Println("Starting notification-service...")
 
-	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		getEnv("DB_HOST", "postgres"),
-		getEnv("DB_PORT", "5432"),
-		getEnv("DB_USER", "goticket"),
-		getEnv("DB_PASSWORD", "goticket123"),
-		getEnv("DB_NAME", "goticket"),
-	)
+	mongoURI := getEnv("MONGO_URI", "mongodb://mongo:27017")
+	mongoDBName := getEnv("MONGO_DB", "goticket")
 
+	// Connect to MongoDB with retry
+	var client *mongo.Client
 	var err error
 	for i := 0; i < 30; i++ {
-		db, err = sql.Open("postgres", connStr)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		client, err = mongo.Connect(ctx, options.Client().ApplyURI(mongoURI))
 		if err == nil {
-			err = db.Ping()
+			err = client.Ping(ctx, nil)
 		}
+		cancel()
 		if err == nil {
 			break
 		}
-		log.Printf("Waiting for database... attempt %d/30: %v", i+1, err)
+		log.Printf("Waiting for MongoDB... attempt %d/30: %v", i+1, err)
 		time.Sleep(2 * time.Second)
 	}
 	if err != nil {
-		log.Fatalf("FATAL: cannot connect to database: %v", err)
+		log.Fatalf("FATAL: cannot connect to MongoDB: %v", err)
 	}
-	log.Println("Connected to database")
+	log.Println("Connected to MongoDB")
+
+	collection = client.Database(mongoDBName).Collection("notifications")
 
 	http.HandleFunc("/health", healthHandler)
 	http.Handle("/metrics", promhttp.Handler())

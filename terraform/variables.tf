@@ -4,25 +4,37 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
+variable "aws_access_key" {
+  description = "AWS Access Key ID"
+  type        = string
+  sensitive   = true
+}
+
+variable "aws_secret_key" {
+  description = "AWS Secret Access Key"
+  type        = string
+  sensitive   = true
+}
+
 variable "instance_type" {
-  description = "EC2 instance type"
+  description = "EC2 instance type (t2.micro = free tier)"
   type        = string
   default     = "t2.micro"
 }
 
 variable "ami_id" {
-  description = "AMI ID for Amazon Linux 2023"
+  description = "AMI ID for Ubuntu 22.04 LTS (us-east-1)"
   type        = string
-  default     = "ami-0c02fb55956c7d316"
+  default     = "ami-0c7217cdde317cfec"
 }
 
 variable "key_name" {
-  description = "Name of the SSH key pair"
+  description = "Name of the SSH key pair created in AWS Console"
   type        = string
 }
 
 variable "repo_url" {
   description = "Git repository URL for the project"
   type        = string
-  default     = "https://github.com/your-username/goticket.git"
+  default     = "https://github.com/ddsheyh/sre6as.git"
 }

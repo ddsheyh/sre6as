@@ -1,7 +1,7 @@
 package main
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,12 +11,15 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	_ "github.com/lib/pq"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-var db *sql.DB
+var collection *mongo.Collection
 var jwtSecret []byte
 
 var (
@@ -28,6 +31,15 @@ var (
 
 func init() {
 	prometheus.MustRegister(httpRequests)
+}
+
+// Message represents a chat message stored in MongoDB
+type Message struct {
+	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	UserID    int                `bson:"user_id" json:"user_id"`
+	Username  string             `bson:"username" json:"username"`
+	Content   string             `bson:"content" json:"content"`
+	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
 }
 
 func jsonResponse(w http.ResponseWriter, status int, data interface{}) {
@@ -59,11 +71,13 @@ func extractUser(r *http.Request) (int, string, error) {
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
-	if err := db.Ping(); err != nil {
-		jsonError(w, 503, "database unavailable")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := collection.Database().Client().Ping(ctx, nil); err != nil {
+		jsonError(w, 503, "mongodb unavailable")
 		return
 	}
-	jsonResponse(w, 200, map[string]string{"status": "ok", "service": "chat-service"})
+	jsonResponse(w, 200, map[string]string{"status": "ok", "service": "chat-service", "database": "mongodb"})
 }
 
 func messagesHandler(w http.ResponseWriter, r *http.Request) {
@@ -78,30 +92,30 @@ func messagesHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getMessages(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query("SELECT id, user_id, username, content, created_at FROM messages ORDER BY created_at DESC LIMIT 50")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(50)
+	cursor, err := collection.Find(ctx, bson.D{}, opts)
 	if err != nil {
 		log.Printf("ERROR list messages: %v", err)
 		httpRequests.WithLabelValues("GET", "/api/messages", "500").Inc()
 		jsonError(w, 500, "internal error")
 		return
 	}
-	defer rows.Close()
+	defer cursor.Close(ctx)
 
-	type Message struct {
-		ID        int    `json:"id"`
-		UserID    int    `json:"user_id"`
-		Username  string `json:"username"`
-		Content   string `json:"content"`
-		CreatedAt string `json:"created_at"`
+	var messages []Message
+	if err := cursor.All(ctx, &messages); err != nil {
+		log.Printf("ERROR decode messages: %v", err)
+		httpRequests.WithLabelValues("GET", "/api/messages", "500").Inc()
+		jsonError(w, 500, "internal error")
+		return
 	}
-	messages := []Message{}
-	for rows.Next() {
-		var m Message
-		if err := rows.Scan(&m.ID, &m.UserID, &m.Username, &m.Content, &m.CreatedAt); err != nil {
-			continue
-		}
-		messages = append(messages, m)
+	if messages == nil {
+		messages = []Message{}
 	}
+
 	httpRequests.WithLabelValues("GET", "/api/messages", "200").Inc()
 	jsonResponse(w, 200, messages)
 }
@@ -123,11 +137,17 @@ func sendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var id int
-	err = db.QueryRow(
-		"INSERT INTO messages (user_id, username, content) VALUES ($1, $2, $3) RETURNING id",
-		userID, email, req.Content,
-	).Scan(&id)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	msg := Message{
+		UserID:    userID,
+		Username:  email,
+		Content:   req.Content,
+		CreatedAt: time.Now(),
+	}
+
+	result, err := collection.InsertOne(ctx, msg)
 	if err != nil {
 		log.Printf("ERROR send message: %v", err)
 		httpRequests.WithLabelValues("POST", "/api/messages", "500").Inc()
@@ -136,7 +156,7 @@ func sendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpRequests.WithLabelValues("POST", "/api/messages", "201").Inc()
-	jsonResponse(w, 201, map[string]interface{}{"id": id, "status": "sent"})
+	jsonResponse(w, 201, map[string]interface{}{"id": result.InsertedID, "status": "sent"})
 }
 
 func main() {
@@ -145,30 +165,31 @@ func main() {
 
 	jwtSecret = []byte(getEnv("JWT_SECRET", "goticket-secret-key"))
 
-	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		getEnv("DB_HOST", "postgres"),
-		getEnv("DB_PORT", "5432"),
-		getEnv("DB_USER", "goticket"),
-		getEnv("DB_PASSWORD", "goticket123"),
-		getEnv("DB_NAME", "goticket"),
-	)
+	mongoURI := getEnv("MONGO_URI", "mongodb://mongo:27017")
+	mongoDBName := getEnv("MONGO_DB", "goticket")
 
+	// Connect to MongoDB with retry
+	var client *mongo.Client
 	var err error
 	for i := 0; i < 30; i++ {
-		db, err = sql.Open("postgres", connStr)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		client, err = mongo.Connect(ctx, options.Client().ApplyURI(mongoURI))
 		if err == nil {
-			err = db.Ping()
+			err = client.Ping(ctx, nil)
 		}
+		cancel()
 		if err == nil {
 			break
 		}
-		log.Printf("Waiting for database... attempt %d/30: %v", i+1, err)
+		log.Printf("Waiting for MongoDB... attempt %d/30: %v", i+1, err)
 		time.Sleep(2 * time.Second)
 	}
 	if err != nil {
-		log.Fatalf("FATAL: cannot connect to database: %v", err)
+		log.Fatalf("FATAL: cannot connect to MongoDB: %v", err)
 	}
-	log.Println("Connected to database")
+	log.Println("Connected to MongoDB")
+
+	collection = client.Database(mongoDBName).Collection("messages")
 
 	http.HandleFunc("/health", healthHandler)
 	http.Handle("/metrics", promhttp.Handler())

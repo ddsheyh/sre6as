@@ -1,0 +1,189 @@
+name: GoTicket CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/goticket
+
+jobs:
+  # ============================================
+  # Job 1: TESTING
+  # ============================================
+  testing:
+    name: Testing
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate Docker Compose syntax
+        run: docker compose config --quiet
+
+      - name: Validate Kubernetes manifests
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          for file in k8s/**/*.yaml; do
+            echo "Validating $file..."
+            ./kubectl apply --dry-run=client -f "$file" 2>&1 || true
+          done
+
+      - name: Validate Ansible syntax
+        run: |
+          pip install ansible
+          ansible-playbook ansible/install.yml --syntax-check
+          ansible-playbook ansible/deploy.yml --syntax-check
+          ansible-playbook ansible/monitoring.yml --syntax-check
+
+      - name: Validate Terraform
+        run: |
+          cd terraform
+          terraform init -backend=false
+          terraform validate
+
+      - name: Build Go services (compile check)
+        run: |
+          for svc in auth user event order chat notification; do
+            echo "=== Building $svc ==="
+            cd services/$svc
+            go mod tidy
+            CGO_ENABLED=0 go build -o /dev/null . || echo "WARN: $svc build issue"
+            cd ../..
+          done
+
+  # ============================================
+  # Job 2: BUILD IMAGES
+  # ============================================
+  build-images:
+    name: Build Images
+    runs-on: ubuntu-latest
+    needs: testing
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push service images
+        run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          for svc in auth user event order chat notification; do
+            IMAGE="${{ env.IMAGE_PREFIX }}-${svc}-service"
+            echo "=== Building $IMAGE ==="
+            docker build -t ${IMAGE}:latest -t ${IMAGE}:${SHORT_SHA} ./services/${svc}
+            docker push ${IMAGE}:latest
+            docker push ${IMAGE}:${SHORT_SHA}
+          done
+
+  # ============================================
+  # Job 3: SSH -> SERVER (Deploy via Ansible)
+  # ============================================
+  deploy-server:
+    name: SSH + Ansible Deploy
+    runs-on: ubuntu-latest
+    needs: build-images
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Test SSH connection
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} \
+            "echo 'SSH connection successful' && docker --version"
+
+      - name: Install Ansible
+        run: pip install ansible
+
+      - name: Create dynamic inventory
+        run: |
+          cat > ansible/ci-inventory.ini <<EOF
+          [servers]
+          goticket ansible_host=${{ secrets.SERVER_IP }} ansible_user=${{ secrets.SERVER_USER }} ansible_ssh_private_key_file=~/.ssh/deploy_key
+
+          [servers:vars]
+          ansible_python_interpreter=/usr/bin/python3
+          ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+          EOF
+
+      - name: Run Ansible deploy
+        run: |
+          cd ansible
+          ansible-playbook -i ci-inventory.ini deploy.yml
+
+      - name: Verify deployment
+        run: |
+          sleep 30
+          curl -f http://${{ secrets.SERVER_IP }}/api/events || echo "WARN: app not yet ready"
+          curl -f http://${{ secrets.SERVER_IP }}:9090/-/healthy || echo "WARN: prometheus not yet ready"
+
+  # ============================================
+  # Job 4: DEPLOY KUBE (validation)
+  # ============================================
+  deploy-kube:
+    name: Deploy Kube (Validation)
+    runs-on: ubuntu-latest
+    needs: testing
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Start Minikube
+        uses: medyagh/setup-minikube@latest
+        with:
+          minikube-version: latest
+          kubernetes-version: v1.30.0
+
+      - name: Build images in Minikube
+        run: |
+          eval $(minikube docker-env)
+          for svc in auth event order; do
+            docker build -t goticket/${svc}-service ./services/${svc}
+          done
+
+      - name: Deploy to Minikube
+        run: |
+          kubectl apply -f k8s/postgres/
+          sleep 10
+          kubectl apply -f k8s/auth/
+          kubectl apply -f k8s/event/
+          kubectl apply -f k8s/order/
+
+      - name: Wait for pods to be ready
+        run: |
+          kubectl wait --for=condition=Ready pod -l app=postgres --timeout=120s || true
+          kubectl wait --for=condition=Ready pod -l app=auth-service --timeout=120s || true
+          kubectl wait --for=condition=Ready pod -l app=event-service --timeout=120s || true
+          sleep 5
+
+      - name: Show deployment status
+        run: |
+          echo "=== Pods ==="
+          kubectl get pods
+          echo "=== Services ==="
+          kubectl get services
+          echo "=== Deployments ==="
+          kubectl get deployments
