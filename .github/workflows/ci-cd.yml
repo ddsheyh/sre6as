@@ -127,14 +127,21 @@ jobs:
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} \
             "cat > /opt/goticket/.env << 'ENVEOF'
-          DB_HOST=${{ secrets.DB_HOST }}
-          DB_PORT=${{ secrets.DB_PORT }}
-          DB_USER=${{ secrets.DB_USER }}
+          POSTGRES_USER=${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD=${{ secrets.DB_PASSWORD }}
+          POSTGRES_DB=${{ secrets.POSTGRES_DB }}
+          DB_HOST=postgres
+          DB_PORT=5432
+          DB_USER=${{ secrets.POSTGRES_USER }}
           DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-          DB_NAME=${{ secrets.DB_NAME }}
-          JWT_SECRET=${{ secrets.JWT_SECRET }}
-          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          DB_NAME=${{ secrets.POSTGRES_DB }}
+          ORDER_DB_HOST=postgres
           MONGO_URI=${{ secrets.MONGO_URI }}
+          MONGO_DB=${{ secrets.MONGO_DB }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          SERVICE_PORT=8080
+          GRAFANA_ADMIN_USER=${{ secrets.GRAFANA_ADMIN_USER }}
+          GRAFANA_ADMIN_PASSWORD=${{ secrets.GRAFANA_ADMIN_PASSWORD }}
           ENVEOF"
 
       - name: Install Ansible
