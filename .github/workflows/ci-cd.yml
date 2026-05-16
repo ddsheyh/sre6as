@@ -40,11 +40,19 @@ jobs:
           ansible-playbook ansible/deploy.yml --syntax-check
           ansible-playbook ansible/monitoring.yml --syntax-check
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
       - name: Validate Terraform
         run: |
           cd terraform
           terraform init -backend=false
           terraform validate
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
 
       - name: Build Go services (compile check)
         run: |
