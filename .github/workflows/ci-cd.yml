@@ -113,6 +113,21 @@ jobs:
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} \
             "echo 'SSH connection successful' && docker --version"
+          
+      - name: Create .env on server
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} \
+            "cat > /opt/goticket/.env << 'ENVEOF'
+          DB_HOST=${{ secrets.DB_HOST }}
+          DB_PORT=${{ secrets.DB_PORT }}
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          DB_NAME=${{ secrets.DB_NAME }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          MONGO_URI=${{ secrets.MONGO_URI }}
+          ENVEOF"
 
       - name: Install Ansible
         run: pip install ansible

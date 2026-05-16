@@ -20,5 +20,5 @@ output "prometheus_url" {
 
 output "ssh_command" {
   description = "SSH command to connect to the server"
-  value       = "ssh -i ~/.ssh/${var.key_name}.pem ubuntu@${aws_instance.goticket_server.public_ip}"
+  value       = "ssh -i ~/Downloads/${var.key_name}.pem ubuntu@${aws_instance.goticket_server.public_ip}"
 }

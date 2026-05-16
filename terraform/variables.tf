@@ -1,7 +1,7 @@
 variable "aws_region" {
   description = "AWS region to deploy the instance"
   type        = string
-  default     = "us-east-1"
+  default     = "eu-north-1"
 }
 
 variable "aws_access_key" {
@@ -19,13 +19,13 @@ variable "aws_secret_key" {
 variable "instance_type" {
   description = "EC2 instance type (t2.micro = free tier)"
   type        = string
-  default     = "t2.micro"
+  default     = "t3.micro"
 }
 
 variable "ami_id" {
   description = "AMI ID for Ubuntu 22.04 LTS (us-east-1)"
   type        = string
-  default     = "ami-0c7217cdde317cfec"
+  default     = "ami-05d62b9bc5a6ca605"
 }
 
 variable "key_name" {

@@ -7,6 +7,14 @@
     repo_url: "https://github.com/ddsheyh/sre6as.git"
     app_dir: "/opt/goticket"
   tasks:
+    - name: Copy .env file to server
+      copy:
+        src: ../.env
+        dest: /opt/goticket/.env
+        owner: ubuntu
+        group: ubuntu
+        mode: '0600'
+
     - name: Create application directory
       file:
         path: "{{ app_dir }}"
