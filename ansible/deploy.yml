@@ -61,7 +61,7 @@
 
     - name: Verify web application is responding
       uri:
-        url: "http://localhost/api/events"
+        url: "https://nashatyr.me/api/events"
         return_content: yes
         status_code: 200
       register: health
